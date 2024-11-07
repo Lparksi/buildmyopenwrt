@@ -1,0 +1,61 @@
+# .travis.yml
+
+# 配置语言和操作系统
+language: bash
+dist: jammy
+os: linux
+
+env:
+  global:
+    - REPO_URL=https://github.com/coolsnowwolf/lede
+    - REPO_BRANCH=master
+    - FEEDS_CONF=feeds.conf.default
+    - CONFIG_FILE=.config
+    - DIY_P1_SH=diy-part1.sh
+    - DIY_P2_SH=diy-part2.sh
+    - UPLOAD_BIN_DIR=false
+    - UPLOAD_FIRMWARE=true
+    - UPLOAD_RELEASE=true
+    - TZ=Asia/Shanghai
+
+script:
+  - |
+    # 环境初始化及编译过程
+    sudo timedatectl set-timezone "$TZ"
+    mkdir -p /workdir
+    cd /workdir
+    git clone $REPO_URL -b $REPO_BRANCH openwrt
+    ln -sf /workdir/openwrt $TRAVIS_BUILD_DIR/openwrt
+
+    if [ -e $FEEDS_CONF ]; then mv $FEEDS_CONF openwrt/feeds.conf.default; fi
+    chmod +x $DIY_P1_SH
+    cd openwrt
+    $TRAVIS_BUILD_DIR/$DIY_P1_SH
+
+    ./scripts/feeds update -a
+    ./scripts/feeds install -a
+
+    if [ -e "$TRAVIS_BUILD_DIR/files" ]; then mv "$TRAVIS_BUILD_DIR/files" "openwrt/files"; fi
+    if [ -e $CONFIG_FILE ]; then mv "$TRAVIS_BUILD_DIR/$CONFIG_FILE" "openwrt/.config"; fi
+    chmod +x $DIY_P2_SH
+    $TRAVIS_BUILD_DIR/$DIY_P2_SH
+
+    make defconfig
+    make download -j8
+    find dl -size -1024c -exec rm -f {} \;
+
+    make -j$(nproc) || make -j1 || make -j1 V=s
+
+    # 设置 FIRMWARE_PATH 供上传使用
+    cd openwrt/bin/targets/*/*
+    export FIRMWARE_PATH=$PWD
+
+# 上传编译后的文件到 GitHub Releases
+deploy:
+  provider: releases
+  token: $GITHUB_TOKEN
+  file_glob: true
+  file: "${FIRMWARE_PATH}/*"     # 上传文件路径
+  skip_cleanup: true
+  on:
+    branch: master
